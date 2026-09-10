@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import embed, { type VisualizationSpec } from 'vega-embed';
 import type { ScenegraphEvent, View } from 'vega';
 import { getMobileVegaLiteConfig } from './mobileTheme';
@@ -16,6 +16,22 @@ interface ResponsiveVegaLiteChartProps {
   aspectRatio?: number;
   minHeight?: number;
   maxHeight?: number;
+  /**
+   * Extra pixels the clip boundary gets *beyond* the measured/requested
+   * width, for content that's meant to bleed slightly past the chart's own
+   * box — an angled axis label's tail, mainly (measured ~19px past the box
+   * even with `labelAlign: 'right'`; Vega-Lite's plot-margin math reserves
+   * room for rotated labels vertically but not this specific horizontal
+   * case). Wrapping the *outer* element in more padding doesn't help — the
+   * clip happens at this component's own box regardless of a sibling's
+   * padding, confirmed by measuring a "fixed" label's position against the
+   * unmoved inner clip boundary while the outer Panel had headroom to
+   * spare. Needs pairing with a page-level `overflow-x: hidden` somewhere
+   * up the tree (App.tsx's root, `.storybook/preview.tsx`'s decorator) —
+   * this buffer intentionally lets content spill past *this* box; only the
+   * page as a whole guarantees no actual horizontal scrollbar.
+   */
+  overflowMargin?: number;
   /**
    * Tap-to-reveal detail panel instead of a hover tooltip — the mobile-native
    * pattern (a cursor-tracking tooltip is hard to read and easy to lose under
@@ -67,14 +83,22 @@ export function ResponsiveVegaLiteChart({
   enableTapDetail = true,
   renderDetail,
   onMarkTap,
+  overflowMargin = 0,
 }: ResponsiveVegaLiteChartProps) {
-  const { ref: containerRef, width } = useContainerWidth();
+  // `measureRef` is a plain, unstyled sibling used *only* to read the true
+  // available width — `embedRef` (below) is what vega-embed actually
+  // targets, and its own width is a fixed pixel value derived from this
+  // measurement plus `overflowMargin`, not `100%`. Measuring from the
+  // *embed* element itself would feed back into its own width once
+  // `overflowMargin` widens it, growing without bound.
+  const { ref: measureRef, width } = useContainerWidth();
+  const embedRef = useRef<HTMLDivElement>(null);
   const [detail, setDetail] = useState<Datum | null>(null);
 
   const height = width > 0 ? Math.min(maxHeight, Math.max(minHeight, Math.round(width * aspectRatio))) : minHeight;
 
   useEffect(() => {
-    const el = containerRef.current;
+    const el = embedRef.current;
     if (!el || width === 0) return;
     let cancelled = false;
     let cleanupFn: (() => void) | undefined;
@@ -122,6 +146,8 @@ export function ResponsiveVegaLiteChart({
 
   return (
     <div>
+      {/* width-measurement only — no visible content, no overflow style. Kept separate from `embedRef` below so widening that one (via `overflowMargin`) never feeds back into what this one reports. */}
+      <div ref={measureRef} style={{ width: '100%' }} />
       {/*
         overflow: hidden here is a containment safety net, not a fix for
         any one chart. Bisected this down thoroughly: even a bare-minimum
@@ -136,9 +162,13 @@ export function ResponsiveVegaLiteChart({
         gets added on top of the canvas regardless of autosize settings.
         That's real chart geometry, not decorative text like a legend —
         there's no "just render it in HTML instead" alternative for an
-        axis. Clipping the container is the actual fix.
+        axis. Clipping the container is the actual fix — `overflowMargin`
+        (see its own doc comment) is the escape hatch for content that's
+        *meant* to bleed a little past the chart's own box, like an angled
+        label's tail; this fixed-pixel width (not `100%`) is what makes
+        that safe to widen without measureRef seeing it and looping.
       */}
-      <div ref={containerRef} style={{ width: '100%', overflow: 'hidden' }} />
+      <div ref={embedRef} style={width > 0 ? { width: width + overflowMargin, overflow: 'hidden' } : undefined} />
       {enableTapDetail && detail && (
         <DetailPanel datum={detail} colorScheme={colorScheme} onClose={closeDetail} render={renderDetail} />
       )}

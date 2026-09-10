@@ -45,6 +45,12 @@ export default function App() {
     <div
       style={{
         minHeight: '100vh',
+        // belt-and-suspenders with ResponsiveVegaLiteChart's per-chart
+        // clip: this is what actually guarantees no visible horizontal
+        // scrollbar, no matter how a chart's own `overflowMargin` (or a
+        // future chart's own quirk) is tuned — see that component's doc
+        // comment for the full reasoning.
+        overflowX: 'hidden',
         background: isDark ? '#12151c' : '#f4f5f9',
         fontFamily: ADOBE_CLEAN_FONT,
         paddingBottom: 32,

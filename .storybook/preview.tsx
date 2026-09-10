@@ -36,6 +36,18 @@ const preview: Preview = {
       defaultViewport: 'iphone14',
     },
   },
+  // Same belt-and-suspenders as App.tsx's own root — a page-level
+  // safety net against horizontal scroll, paired with
+  // ResponsiveVegaLiteChart's per-chart `overflowMargin` (see its doc
+  // comment). Applies to every story so individual ones don't each need
+  // their own wrapper for this.
+  decorators: [
+    (Story) => (
+      <div style={{ overflowX: 'hidden', width: '100%' }}>
+        <Story />
+      </div>
+    ),
+  ],
 };
 
 export default preview;
