@@ -73,7 +73,7 @@ export function Bar({ title, data, type = 'simple', yLabel, isDark = false, colo
           ~19px past the chart's own box) — see ResponsiveVegaLiteChart's
           own doc comment for why a wrapper div's padding doesn't fix this
           (tried that first) and this prop does. */}
-      <ResponsiveVegaLiteChart spec={buildBarSpec(data, type, yLabel)} aspectRatio={0.62} colorScheme={isDark ? 'dark' : 'light'} colors={colors ?? palette.colors} overflowMargin={34} />
+      <ResponsiveVegaLiteChart spec={buildBarSpec(data, type, yLabel)} aspectRatio={0.62} colorScheme={isDark ? 'dark' : 'light'} colors={colors ?? palette.colors} overflowMargin={54} />
     </Panel>
   );
 }

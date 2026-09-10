@@ -32,8 +32,13 @@ function buildComboSpec(data: ComboDatum[], barLabel: string | undefined, lineLa
     resolve: { scale: { y: 'independent' } },
     layer: [
       {
+        // '~s' (SI-prefix, e.g. "1.5k") keeps the left y-axis label footprint
+        // short — a mobile card has two y-axes to fit side by side, and a
+        // full "1,500"-style label was the main driver of the canvas
+        // overshoot clipped by the container below (see overflowMargin's
+        // comment on the <Combo> component).
         mark: { type: 'bar', color: barColor },
-        encoding: { x, y: { field: 'bar', type: 'quantitative', title: barLabel ?? null } },
+        encoding: { x, y: { field: 'bar', type: 'quantitative', title: barLabel ?? null, axis: { format: '~s' } } },
       },
       {
         mark: { type: 'line', color: lineColor, strokeWidth: 2.5, point: true },
@@ -57,7 +62,7 @@ export function Combo({ title, data, barLabel, lineLabel, isDark = false, barCol
         spec={buildComboSpec(data, barLabel, lineLabel, resolvedBarColor, resolvedLineColor)}
         aspectRatio={0.62}
         colorScheme={isDark ? 'dark' : 'light'}
-        overflowMargin={28}
+        overflowMargin={48}
       />
     </Panel>
   );

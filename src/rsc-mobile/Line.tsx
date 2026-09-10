@@ -55,7 +55,7 @@ export function Line({ title, data, yLabel, isDark = false, colors, filled = fal
   return (
     <Panel title={title} isDark={isDark}>
       {/* overflowMargin — see Bar.tsx's comment / ResponsiveVegaLiteChart's own doc comment */}
-      <ResponsiveVegaLiteChart spec={buildLineSpec(data, yLabel, filled)} aspectRatio={0.62} colorScheme={isDark ? 'dark' : 'light'} colors={colors ?? palette.colors} overflowMargin={34} />
+      <ResponsiveVegaLiteChart spec={buildLineSpec(data, yLabel, filled)} aspectRatio={0.62} colorScheme={isDark ? 'dark' : 'light'} colors={colors ?? palette.colors} overflowMargin={50} />
     </Panel>
   );
 }
