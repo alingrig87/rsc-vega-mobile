@@ -73,6 +73,58 @@ export function buildGaugeSpec(width: number, height: number, opts: GaugeOptions
   };
 }
 
+export interface ConcentricGaugeRing {
+  value: number;
+  max?: number;
+  color: string;
+  label?: string;
+}
+
+/**
+ * Several progress rings nested inside one another, each its own metric —
+ * a full 360° sweep per ring (not the open-gap speedometer style
+ * `buildGaugeSpec` uses), since with 2–3 rings stacked the gap reads as
+ * visual noise rather than a deliberate "meter" affordance. A shared center
+ * label (usually the highest-priority ring's own value) sits in the
+ * innermost hole; per-ring values are meant to be read from an accompanying
+ * legend/list rendered in React next to the chart, not crammed as more text
+ * inside the rings themselves.
+ */
+export function buildConcentricGaugeSpec(width: number, height: number, rings: ConcentricGaugeRing[], centerText?: string): VisualizationSpec {
+  const outerRadius = Math.min(width, height) / 2 - 4;
+  const ringThickness = outerRadius / (rings.length * 1.8);
+  const ringGap = ringThickness * 0.35;
+
+  const layers: Record<string, unknown>[] = [];
+  rings.forEach((ring, i) => {
+    const ringOuter = outerRadius - i * (ringThickness + ringGap);
+    const ringInner = ringOuter - ringThickness;
+    const fraction = Math.max(0, Math.min(1, ring.value / (ring.max ?? 100)));
+    const endAngle = fraction * 2 * Math.PI;
+    layers.push(
+      {
+        mark: { type: 'arc', innerRadius: ringInner, outerRadius: ringOuter, color: 'rgb(238, 238, 238)' },
+        encoding: { theta: { value: 0 }, theta2: { value: 2 * Math.PI } },
+      },
+      {
+        mark: { type: 'arc', innerRadius: ringInner, outerRadius: ringOuter, cornerRadius: ringThickness / 2, color: ring.color },
+        encoding: { theta: { value: 0 }, theta2: { value: endAngle } },
+      },
+    );
+  });
+
+  if (centerText) {
+    const innermostRadius = outerRadius - (rings.length - 1) * (ringThickness + ringGap) - ringThickness;
+    layers.push({
+      data: { values: [{}] },
+      mark: { type: 'text', fontSize: Math.max(14, Math.round(innermostRadius * 0.5)), fontWeight: 'bold' },
+      encoding: { text: { value: centerText } },
+    });
+  }
+
+  return { data: { values: [{}] }, layer: layers } as unknown as VisualizationSpec;
+}
+
 export interface DonutSummaryOptions {
   data: { label: string; value: number }[];
   /** Pre-formatted center string, e.g. "$5,639". Falls back to the plain sum. */
@@ -80,12 +132,44 @@ export interface DonutSummaryOptions {
   centerLabel?: string;
   holeRatio?: number;
   showSegmentPercent?: boolean;
+  colors?: string[];
+}
+
+export interface DonutLegendEntry {
+  label: string;
+  value: number;
+  color: string;
+}
+
+/**
+ * Per-segment colors, computed once and shared by both
+ * `buildDonutSummarySpec` (so the ring's arc colors match) and whatever
+ * legend the caller renders next to it. Deliberately plain data, not a
+ * chart spec — see `buildDonutSummarySpec`'s own comment for why the
+ * legend itself belongs in React/HTML, not here.
+ */
+export function getDonutLegend(data: { label: string; value: number }[], colors: string[] = categorical16): DonutLegendEntry[] {
+  return data.map((d, i) => ({ label: d.label, value: d.value, color: colors[i % colors.length] }));
 }
 
 /**
  * Donut ring with a big total in the hole and (optionally) a percent label
  * baked into each segment — RSC's `<DonutSummary>` + `<SegmentLabel>`
- * pattern, see the annotations-and-overlays skill reference.
+ * pattern, see the annotations-and-overlays skill reference. Renders the
+ * ring only — no Vega-Lite legend. A legend positioned beside or below the
+ * ring is layout and text, which CSS already does well; asking Vega-Lite's
+ * legend to fit a width/height *this component* reserved for it, rather
+ * than one Vega-Lite computed for itself, turned out not to work: a
+ * `orient: 'right'` legend with long-enough labels rendered wider than the
+ * space reserved, and because Vega's `'pad'` autosize sizes the SVG to
+ * whatever the legend actually needs (not the `width` requested) and SVGs
+ * don't clip to their own `width` attribute by default, the excess became
+ * visible content pushing past the card — confirmed by watching
+ * `document.documentElement.scrollWidth` exceed the viewport. Pair this
+ * with `getDonutLegend(data)` rendered as plain HTML next to or below the
+ * `<ResponsiveVegaLiteChart>` instead (see the `Mobile/DonutSummary` story
+ * or `App.tsx`'s "Spend by Team" card for the pattern) — same colors,
+ * guaranteed to fit because it's laid out by the browser, not a chart engine.
  *
  * Segment angles are computed explicitly in JS (not left to Vega-Lite's
  * implicit quantitative-`theta` stacking) and baked into the data as
@@ -98,22 +182,26 @@ export interface DonutSummaryOptions {
  * instead of sitting centered in its own wedge.
  */
 export function buildDonutSummarySpec(width: number, height: number, opts: DonutSummaryOptions): VisualizationSpec {
-  const { data, centerValue, centerLabel, holeRatio = DEFAULT_DONUT_HOLE_RATIO, showSegmentPercent = true } = opts;
+  const { data, centerValue, centerLabel, holeRatio = DEFAULT_DONUT_HOLE_RATIO, showSegmentPercent = true, colors = categorical16 } = opts;
   const total = data.reduce((sum, d) => sum + d.value, 0);
-  // the bottom legend (added because small segments drop their inline
-  // label below) needs room of its own — same idea as the desktop
-  // project's DONUT_LEGEND_RESERVE, sized for ~2 wrapped legend rows.
-  const legendReserve = 46;
-  const outerRadius = Math.min(width, Math.max(height - legendReserve, 40)) / 2;
+  const outerRadius = Math.min(width, height) / 2 - 4;
   const innerRadius = outerRadius * holeRatio;
 
   let cumulative = 0;
-  const rows = data.map((d) => {
+  const rows = data.map((d, i) => {
     const startAngle = (cumulative / total) * 2 * Math.PI;
     cumulative += d.value;
     const endAngle = (cumulative / total) * 2 * Math.PI;
     const pct = d.value / total;
-    return { ...d, startAngle, endAngle, midAngle: (startAngle + endAngle) / 2, pct: `${Math.round(pct * 100)}%`, fraction: pct };
+    return {
+      ...d,
+      startAngle,
+      endAngle,
+      midAngle: (startAngle + endAngle) / 2,
+      pct: `${Math.round(pct * 100)}%`,
+      fraction: pct,
+      color: colors[i % colors.length],
+    };
   });
 
   const layers: Record<string, unknown>[] = [
@@ -122,11 +210,7 @@ export function buildDonutSummarySpec(width: number, height: number, opts: Donut
       encoding: {
         theta: { field: 'startAngle', type: 'quantitative' as const, scale: null },
         theta2: { field: 'endAngle', type: 'quantitative' as const },
-        // segments below the crowding threshold (see the filter below) drop
-        // their inline label, so a legend is the only remaining way to
-        // identify them — never suppress it here even though the rest of
-        // this project's donuts keep legend/label choices explicit per call site.
-        color: { field: 'label', type: 'nominal' as const, sort: null, legend: { title: null, orient: 'bottom', columns: 3, labelFontSize: 11 } },
+        color: { field: 'color', type: 'nominal' as const, scale: null, legend: null },
         tooltip: [
           { field: 'label', type: 'nominal' as const },
           { field: 'value', type: 'quantitative' as const },
@@ -138,11 +222,13 @@ export function buildDonutSummarySpec(width: number, height: number, opts: Donut
   if (showSegmentPercent) {
     // Below ~15% of the total, a segment's angular span is too narrow for
     // its own label at this font size without colliding with its
-    // neighbors' — drop those rather than render a crowded cluster
-    // (there's still no collision avoidance to fall back on, same caveat
-    // as the desktop project's segment-label note in the
-    // annotations-and-overlays skill reference — this fix only corrects
-    // *where* a shown label sits, not spacing between adjacent ones).
+    // neighbors' — drop those rather than render a crowded cluster (still
+    // no collision avoidance to fall back on, same caveat as the desktop
+    // project's segment-label note in the annotations-and-overlays skill
+    // reference — this fix only corrects *where* a shown label sits, not
+    // spacing between adjacent ones). The paired legend (see this
+    // function's own doc comment) is what keeps a dropped segment
+    // identifiable regardless.
     layers.push({
       data: { values: rows.filter((r) => r.fraction >= 0.15) },
       mark: { type: 'text', radius: (innerRadius + outerRadius) / 2, fontSize: 11, fontWeight: 'bold', color: 'white' },
@@ -199,31 +285,6 @@ export function buildCompactDualBarSpec(
       y: { field: metricField, type: 'quantitative', axis: null },
       color: { field: seriesField, type: 'nominal', sort: null, scale: { range: colors }, legend: null },
     },
-  };
-}
-
-/** A compact horizontal bar-per-row list (label · bar · value) — the "Sales by country" / progress-list pattern, built on the same centered layout idea as the desktop project's Bullet replica but without a target rule. */
-export function buildMiniBarListSpec(data: { label: string; value: number }[], color = categorical16[0]): VisualizationSpec {
-  const max = Math.max(...data.map((d) => d.value));
-  return {
-    data: { values: data },
-    layer: [
-      {
-        mark: { type: 'bar', height: 8, cornerRadius: 4, color },
-        encoding: {
-          y: { field: 'label', type: 'nominal', sort: null, title: null, axis: { domain: false, ticks: false, grid: false } },
-          x: { field: 'value', type: 'quantitative', axis: null, scale: { domain: [0, max] } },
-        },
-      },
-      {
-        mark: { type: 'text', align: 'left', dx: 8, fontSize: 11, fontWeight: 'bold', opacity: 0.7 },
-        encoding: {
-          y: { field: 'label', type: 'nominal', sort: null },
-          x: { field: 'value', type: 'quantitative' },
-          text: { field: 'value' },
-        },
-      },
-    ],
   };
 }
 
@@ -306,4 +367,94 @@ export function buildLineCalloutSpec(width: number, height: number, opts: LineCa
       },
     ],
   };
+}
+
+// Horizontal bar-per-row lists (ranked, badged, or current-vs-previous
+// comparison) used to live here as Vega-Lite specs. Moved to `BarList.tsx`
+// as a plain HTML/CSS component instead: every version hit the same
+// confirmed Vega sizing bug — a nominal y-axis of category labels makes
+// Vega-Lite render its SVG wider than the requested width regardless of
+// autosize settings (bisected down to a bare-minimum repro, see
+// ResponsiveVegaLiteChart's `overflow: hidden` comment) — and for a widget
+// that's fundamentally "N rows, each a colored width percentage," CSS does
+// the job directly with none of that failure mode.
+
+export interface TrendSparklineOptions {
+  data: Record<string, unknown>[];
+  previousData?: Record<string, unknown>[];
+  dimensionField: string;
+  metricField: string;
+  color?: string;
+  previousColor?: string;
+}
+
+/** A KPI-tile sparkline with the previous period traced faintly underneath the current one — the overlap is the point (comparison at a glance), not either line read in isolation. Pair with a plain number + delta badge rendered in React above it (see `App.tsx`) rather than trying to fit that into the chart itself. */
+export function buildTrendSparklineSpec(opts: TrendSparklineOptions): VisualizationSpec {
+  const { data, previousData, dimensionField, metricField, color = categorical16[0], previousColor = 'rgb(210, 210, 210)' } = opts;
+  const layer: Record<string, unknown>[] = [];
+  if (previousData) {
+    layer.push({
+      data: { values: previousData },
+      mark: { type: 'line', strokeWidth: 1.75, interpolate: 'monotone', point: false, color: previousColor },
+      encoding: {
+        x: { field: dimensionField, type: 'ordinal', axis: null },
+        y: { field: metricField, type: 'quantitative', axis: null, scale: { zero: false } },
+      },
+    });
+  }
+  layer.push({
+    mark: { type: 'line', strokeWidth: 2, interpolate: 'monotone', point: false, color },
+    encoding: {
+      x: { field: dimensionField, type: 'ordinal', axis: null },
+      y: { field: metricField, type: 'quantitative', axis: null, scale: { zero: false } },
+    },
+  });
+  return { data: { values: data }, layer } as unknown as VisualizationSpec;
+}
+
+export interface StackedAreaOptions {
+  data: Record<string, unknown>[];
+  dimensionField: string;
+  metricField: string;
+  seriesField: string;
+  /** Data order, first-drawn = bottom of the stack — matches how RSC's own stacked marks read (see charts.ts's stackedBarSpec/areaSpec for the underlying rule this mirrors). */
+  seriesOrder: string[];
+  colors?: string[];
+}
+
+/**
+ * A stacked area chart in the same minimal-chrome register as the rest of
+ * `mobileCharts.ts` — smooth (`monotone`) curves, a bare x-axis (no title,
+ * no ticks, no gridlines) instead of `charts.ts`'s fuller desktop-parity
+ * axis treatment, and an optional compact legend instead of one that always
+ * reserves its own row. The desktop project's `areaSpec` is the
+ * pixel-accurate RSC replica; this is the same stacking idea restyled for a
+ * dashboard card instead of a full chart panel.
+ */
+export function buildStackedAreaSpec(opts: StackedAreaOptions): VisualizationSpec {
+  const { data, dimensionField, metricField, seriesField, seriesOrder, colors = categorical16 } = opts;
+  const orderExpr = `{${seriesOrder.map((s, i) => `'${s}':${i}`).join(',')}}[datum.${seriesField}]`;
+
+  return {
+    data: { values: data },
+    transform: [{ calculate: orderExpr, as: '__stackOrder' }],
+    mark: { type: 'area', line: { strokeWidth: 1.5 }, opacity: 0.88, interpolate: 'monotone' },
+    encoding: {
+      x: { field: dimensionField, type: 'ordinal', title: null, axis: { domain: false, ticks: false, grid: false, labelFontSize: 10 } },
+      y: { field: metricField, type: 'quantitative', stack: 'zero', axis: null },
+      order: { field: '__stackOrder', type: 'quantitative' },
+      // No Vega-Lite legend here (see buildDonutSummarySpec's doc comment
+      // for the full story) — this one hit the exact same failure mode: a
+      // forced `columns: seriesOrder.length` bottom legend doesn't wrap
+      // when four category names don't fit one row's width, it just
+      // renders wider than the chart. Pair with `getSeriesLegend` +
+      // `<Legend layout="bottom">` instead (see the Mobile/StackedArea story).
+      color: { field: seriesField, type: 'nominal', sort: null, scale: { domain: seriesOrder, range: colors }, legend: null },
+    },
+  };
+}
+
+/** Label/color pairs for a series-colored chart with no per-entry value (a stacked area's legend, unlike a donut's) — pairs with `<Legend>`. */
+export function getSeriesLegend(seriesOrder: string[], colors: string[] = categorical16): DonutLegendEntry[] {
+  return seriesOrder.map((label, i) => ({ label, value: 0, color: colors[i % colors.length] }));
 }

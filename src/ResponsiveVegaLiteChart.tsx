@@ -122,7 +122,23 @@ export function ResponsiveVegaLiteChart({
 
   return (
     <div>
-      <div ref={containerRef} style={{ width: '100%' }} />
+      {/*
+        overflow: hidden here is a containment safety net, not a fix for
+        any one chart. Bisected this down thoroughly: even a bare-minimum
+        Vega-Lite bar chart with nothing but a nominal y-axis (no custom
+        config at all) renders its SVG *wider than the requested width* —
+        confirmed by compiling and running specs headlessly and reading the
+        actual `<svg width="...">` back. Neither `autosize: {type: 'pad'}`
+        nor `{type: 'pad', contains: 'padding'}` changes this; only
+        `{type: 'fit'}` keeps the *rendered* size at the requested one, and
+        that mode has its own confirmed bug for layered specs (see
+        buildLineCalloutSpec's comment). So: a category axis's label space
+        gets added on top of the canvas regardless of autosize settings.
+        That's real chart geometry, not decorative text like a legend —
+        there's no "just render it in HTML instead" alternative for an
+        axis. Clipping the container is the actual fix.
+      */}
+      <div ref={containerRef} style={{ width: '100%', overflow: 'hidden' }} />
       {enableTapDetail && detail && (
         <DetailPanel datum={detail} colorScheme={colorScheme} onClose={closeDetail} render={renderDetail} />
       )}
